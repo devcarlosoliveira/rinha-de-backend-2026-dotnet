@@ -1,7 +1,9 @@
-# Submissão da Rinha de Backend 2026 — imagem pública linux/amd64.
-# CPU via cpu_period/cpu_quota (período CFS curto = 10ms) p/ reduzir a cauda de p99
-# por throttling, mantendo a média: 0.10 + 0.45 + 0.45 = 1.0 CPU.
-# Memória (deploy.resources): 32 + 159 + 159 = 350 MB.
+# Submissão da Rinha de Backend 2026.
+# A imagem da API precisa estar publicamente acessível (linux/amd64).
+# Defina API_IMAGE com a sua imagem pública, ex.:
+#   export API_IMAGE=seu-usuario/rinha-2026-dotnet:latest
+# Soma dos limites: 0.10 + 0.45 + 0.45 = 1.0 CPU | 32 + 159 + 159 = 350 MB.
+
 services:
   nginx:
     image: nginx:1.27-alpine
@@ -14,12 +16,12 @@ services:
       - api2
     networks:
       - app
-    cpu_period: 10000
-    cpu_quota: 1000
     deploy:
       resources:
         limits:
+          cpus: "0.10"
           memory: "32MB"
+
   api1:
     image: ${API_IMAGE:-devcarlosoliveira/rinha-2026-dotnet:latest}
     environment:
@@ -28,12 +30,12 @@ services:
       PORT: "9999"
     networks:
       - app
-    cpu_period: 10000
-    cpu_quota: 4500
     deploy:
       resources:
         limits:
+          cpus: "0.45"
           memory: "159MB"
+
   api2:
     image: ${API_IMAGE:-devcarlosoliveira/rinha-2026-dotnet:latest}
     environment:
@@ -42,12 +44,12 @@ services:
       PORT: "9999"
     networks:
       - app
-    cpu_period: 10000
-    cpu_quota: 4500
     deploy:
       resources:
         limits:
+          cpus: "0.45"
           memory: "159MB"
+
 networks:
   app:
     driver: bridge
