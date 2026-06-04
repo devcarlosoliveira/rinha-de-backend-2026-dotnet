@@ -480,3 +480,6 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# lock transitório do scheduler (não versionar)
+.claude/scheduled_tasks.lock
