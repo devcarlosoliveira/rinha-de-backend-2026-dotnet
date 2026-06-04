@@ -56,7 +56,7 @@ static class BuildCommand
 
         // reordena por bucket: quantiza vetores e monta o bitset de labels
         var cursor = (int[])offsets.Clone();
-        var qvectors = new byte[(long)n * D < int.MaxValue ? n * D : 0];
+        var vectors16 = new short[n * D];
         var labels = new byte[(n + 7) / 8];
         for (int i = 0; i < n; i++)
         {
@@ -64,7 +64,7 @@ static class BuildCommand
             int pos = cursor[b]++;
             int src = i * D, dst = pos * D;
             for (int d = 0; d < D; d++)
-                qvectors[dst + d] = Quantizer.QuantizeDim(data.Vectors[src + d], d);
+                vectors16[dst + d] = Quantizer.QuantizeI16(data.Vectors[src + d]);
             if (data.Fraud[i] != 0)
                 labels[pos >> 3] |= (byte)(1 << (pos & 7));
         }
@@ -83,8 +83,8 @@ static class BuildCommand
             bw.Write(k);
             bw.Write(MemoryMarshal.AsBytes(centroids.AsSpan()));
             bw.Write(MemoryMarshal.AsBytes(offsets.AsSpan()));
-            bw.Write(qvectors);
             bw.Write(labels);
+            bw.Write(MemoryMarshal.AsBytes<short>(vectors16.AsSpan()));
         }
         long size = new FileInfo(outPath).Length;
         Console.WriteLine($"[write]  {outPath} ({size / (1024.0 * 1024.0):F1} MB) em {sw.ElapsedMilliseconds} ms");

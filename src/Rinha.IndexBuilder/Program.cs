@@ -15,6 +15,14 @@ switch (args[0])
         int seed = IntArg(args, "--seed", 1);
         return BuildCommand.Run(args[1], args[2], k, iters, sample, seed);
 
+    case "diag":
+    {
+        if (args.Length < 4) return Usage();
+        int dsample = IntArg(args, "--sample", 5000);
+        int dnprobe = IntArg(args, "--nprobe", 8);
+        return DiagCommand.Run(args[1], args[2], args[3], dsample, dnprobe);
+    }
+
     default:
         return Usage();
 }
@@ -31,5 +39,6 @@ static int Usage()
     Console.WriteLine("uso:");
     Console.WriteLine("  dotnet run -c Release -- selftest");
     Console.WriteLine("  dotnet run -c Release -- build <references.json.gz> <index.bin> [--k 2048] [--iters 12] [--sample 200000] [--seed 1]");
+    Console.WriteLine("  dotnet run -c Release -- diag <references.json.gz> <index.bin> <test-data.json> [--sample 5000] [--nprobe 8]");
     return 0;
 }

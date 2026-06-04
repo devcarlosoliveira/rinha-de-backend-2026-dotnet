@@ -26,4 +26,23 @@ public static class Quantizer
         for (int i = 0; i < v.Length; i++)
             q[i] = QuantizeDim(v[i], i);
     }
+
+    /// <summary>
+    /// Escala do int16: <c>round(x * 8000)</c>, uniforme em todas as dims (o sentinela -1
+    /// das dims 5,6 vira -8000). Sem pesos ⇒ a distância int16 é a euclidiana pura escalada,
+    /// igual ao ground truth. 8000 evita estouro de int32 na soma SIMD (máx ~20·8000² ≈
+    /// 1,3e9 &lt; 2,1e9).
+    /// </summary>
+    public const float Scale16 = 8000f;
+
+    public static short QuantizeI16(float x)
+    {
+        int q = (int)MathF.Round(x * Scale16, MidpointRounding.AwayFromZero);
+        return (short)(q > short.MaxValue ? short.MaxValue : q < short.MinValue ? short.MinValue : q);
+    }
+
+    public static void QuantizeI16(ReadOnlySpan<float> v, Span<short> q)
+    {
+        for (int i = 0; i < v.Length; i++) q[i] = QuantizeI16(v[i]);
+    }
 }

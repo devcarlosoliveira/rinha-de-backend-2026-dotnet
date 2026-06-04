@@ -9,8 +9,12 @@ public readonly record struct SearchResult(float Score, bool Approved);
 
 /// <summary>
 /// Índice IVF carregado de um <c>index.bin</c>. Read-only e thread-safe.
-/// Consulta: acha os <c>nprobe</c> centroides mais próximos (float) e varre só
-/// esses buckets em int8 ponderado, mantendo os 5 vizinhos mais próximos.
+/// Consulta:
+///  1. acha os <c>nprobe</c> centroides mais próximos (float32);
+///  2. varre esses buckets em <b>int16</b> (escala <see cref="Quantizer.Scale16"/>) com
+///     euclidiana <b>pura</b> em SIMD AVX2, mantendo os 5 vizinhos mais próximos.
+/// int16 dá a precisão que casa com o k-NN exato float do avaliador (recupera o erro
+/// de quantização do int8) e é SIMD-nativo (rápido); cabe em ~84 MB/instância.
 /// </summary>
 public sealed class IvfIndex
 {
@@ -21,13 +25,13 @@ public sealed class IvfIndex
 
     readonly float[] _centroids; // K * D
     readonly int[] _offsets;     // K + 1
-    readonly byte[] _vectors;    // N * D  (int8, reordenado por bucket)
     readonly byte[] _labels;     // bitset (fraude = 1)
+    readonly short[] _vectors;   // N * D int16 (escala 8000), reordenado por bucket, + 16 padding
 
-    IvfIndex(int n, int k, float[] cent, int[] off, byte[] vec, byte[] lab)
+    IvfIndex(int n, int k, float[] cent, int[] off, byte[] lab, short[] vec)
     {
         N = n; K = k;
-        _centroids = cent; _offsets = off; _vectors = vec; _labels = lab;
+        _centroids = cent; _offsets = off; _labels = lab; _vectors = vec;
     }
 
     public static IvfIndex Load(string path)
@@ -47,13 +51,13 @@ public sealed class IvfIndex
         ReadExact(br, MemoryMarshal.AsBytes(cent.AsSpan()));
         var off = new int[k + 1];
         ReadExact(br, MemoryMarshal.AsBytes(off.AsSpan()));
-        // +16 de padding ao final permite leitura SIMD de 16 bytes no último registro
-        var vec = new byte[n * D + 16];
-        ReadExact(br, vec.AsSpan(0, n * D));
         var lab = new byte[(n + 7) / 8];
         ReadExact(br, lab);
+        // +16 shorts de padding permite leitura SIMD de 16 shorts no último registro
+        var vec = new short[n * D + 16];
+        ReadExact(br, MemoryMarshal.AsBytes(vec.AsSpan(0, n * D)));
 
-        return new IvfIndex(n, k, cent, off, vec, lab);
+        return new IvfIndex(n, k, cent, off, lab, vec);
     }
 
     public SearchResult Search(ReadOnlySpan<float> q, int nprobe)
@@ -61,10 +65,10 @@ public sealed class IvfIndex
         if (nprobe < 1) nprobe = 1;
         if (nprobe > K) nprobe = K;
 
-        Span<byte> qq = stackalloc byte[16]; // 16 p/ leitura SIMD; lanes 14,15 = 0
-        Quantizer.Quantize(q, qq);
+        Span<short> qq = stackalloc short[16]; // 16 p/ SIMD; lanes 14,15 = 0
+        Quantizer.QuantizeI16(q, qq.Slice(0, D));
 
-        // --- etapa 1: nprobe centroides mais próximos (float), mantidos ascendentes ---
+        // --- etapa 1: nprobe centroides mais próximos (float), ascendentes ---
         Span<int> probe = stackalloc int[nprobe];
         Span<float> probeD = stackalloc float[nprobe];
         int filled = 0;
@@ -85,7 +89,7 @@ public sealed class IvfIndex
             }
         }
 
-        // --- etapa 2: varre os buckets, mantém os 5 mais próximos (int8 ponderado) ---
+        // --- etapa 2: varre os buckets em int16 (euclidiana pura, SIMD), top-5 ---
         Span<int> bestD = stackalloc int[5];
         Span<byte> bestL = stackalloc byte[5];
         bestD.Fill(int.MaxValue);
@@ -124,20 +128,19 @@ public sealed class IvfIndex
         return s;
     }
 
-    // Pesos pré-multiplicados no diff (antes do quadrado): lanes 5,6 → ×2 ⇒ peso 4 no quadrado;
-    // lanes 14,15 → ×0 zeram o padding/lixo lido a mais pelo SIMD.
-    static readonly Vector256<short> WeightS =
-        Vector256.Create((short)1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 0, 0);
+    // Máscara: lanes 0..13 = 1 (mantém), lanes 14,15 = 0 (zera o lixo lido a mais pelo SIMD).
+    // Sem pesos por dimensão — a escala int16 é uniforme, então é euclidiana pura.
+    static readonly Vector256<short> Mask =
+        Vector256.Create((short)1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    static int VecDist(ReadOnlySpan<byte> q, byte[] vectors, int off)
+    static int VecDist(ReadOnlySpan<short> q, short[] vectors, int off)
     {
         if (Avx2.IsSupported)
         {
-            // zero-estende 16 bytes → int16, subtrai, escala dims 5,6, soma de quadrados (vpmaddwd)
-            Vector256<short> qs = Avx2.ConvertToVector256Int16(Vector128.LoadUnsafe(ref MemoryMarshal.GetReference(q)));
-            Vector256<short> vs = Avx2.ConvertToVector256Int16(Vector128.LoadUnsafe(ref vectors[off]));
-            Vector256<short> diff = Avx2.MultiplyLow(Avx2.Subtract(qs, vs), WeightS);
+            Vector256<short> qs = Vector256.LoadUnsafe(ref MemoryMarshal.GetReference(q));
+            Vector256<short> vs = Vector256.LoadUnsafe(ref vectors[off]);
+            Vector256<short> diff = Avx2.MultiplyLow(Avx2.Subtract(qs, vs), Mask);
             return Vector256.Sum(Avx2.MultiplyAddAdjacent(diff, diff));
         }
 
@@ -145,8 +148,7 @@ public sealed class IvfIndex
         for (int d = 0; d < D; d++)
         {
             int diff = q[d] - vectors[off + d];
-            int sq = diff * diff;
-            s += (d == 5 || d == 6) ? (sq << 2) : sq;
+            s += diff * diff;
         }
         return s;
     }
