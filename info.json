@@ -1,0 +1,7 @@
+{
+  "participants": ["Carlos Oliveira"],
+  "social": ["https://github.com/devcarlosoliveira"],
+  "source-code-repo": "https://github.com/devcarlosoliveira/rinha-de-backend-2026-dotnet",
+  "stack": ["dotnet", "csharp", "native-aot", "nginx"],
+  "open_to_work": false
+}
