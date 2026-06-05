@@ -2,7 +2,25 @@
 # A imagem da API precisa estar publicamente acessível (linux/amd64).
 # Defina API_IMAGE com a sua imagem pública, ex.:
 #   export API_IMAGE=seu-usuario/rinha-2026-dotnet:latest
-# Soma dos limites: 0.10 + 0.45 + 0.45 = 1.0 CPU | 32 + 159 + 159 = 350 MB.
+#
+# 2 instâncias: o índice int16 são ~85 MB residentes (3M×14×2), replicados por instância,
+# então a MEMÓRIA (não a CPU) limita o nº de instâncias. 3× não cabe com folga em 350 MB.
+# Soma dos limites: 0.10 + 2×0.45 = 1.0 CPU | 32 + 2×159 = 350 MB.
+
+x-api: &api
+  image: ${API_IMAGE:-devcarlosoliveira/rinha-2026-dotnet:latest}
+  environment:
+    INDEX_PATH: /app/index.bin
+    NPROBE: "16"
+    PORT: "9999"
+    MIN_THREADS: "8"
+  networks:
+    - app
+  deploy:
+    resources:
+      limits:
+        cpus: "0.45"
+        memory: "159MB"
 
 services:
   nginx:
@@ -23,32 +41,9 @@ services:
           memory: "32MB"
 
   api1:
-    image: ${API_IMAGE:-devcarlosoliveira/rinha-2026-dotnet:latest}
-    environment:
-      INDEX_PATH: /app/index.bin
-      NPROBE: "16"
-      PORT: "9999"
-    networks:
-      - app
-    deploy:
-      resources:
-        limits:
-          cpus: "0.45"
-          memory: "159MB"
-
+    <<: *api
   api2:
-    image: ${API_IMAGE:-devcarlosoliveira/rinha-2026-dotnet:latest}
-    environment:
-      INDEX_PATH: /app/index.bin
-      NPROBE: "16"
-      PORT: "9999"
-    networks:
-      - app
-    deploy:
-      resources:
-        limits:
-          cpus: "0.45"
-          memory: "159MB"
+    <<: *api
 
 networks:
   app:

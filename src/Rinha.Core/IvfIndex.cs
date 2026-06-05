@@ -47,8 +47,10 @@ public sealed class IvfIndex
         if (version != IndexFormat.Version || dims != D)
             throw new InvalidDataException($"index incompatível (version={version}, dims={dims})");
 
-        var cent = new float[k * D];
-        ReadExact(br, MemoryMarshal.AsBytes(cent.AsSpan()));
+        // +16 floats de padding: permite ler 16 floats (2× AVX2) do último centroide
+        // sem sair do array; as dims 14,15 são zeradas pela máscara FMask.
+        var cent = new float[k * D + 16];
+        ReadExact(br, MemoryMarshal.AsBytes(cent.AsSpan(0, k * D)));
         var off = new int[k + 1];
         ReadExact(br, MemoryMarshal.AsBytes(off.AsSpan()));
         var lab = new byte[(n + 7) / 8];
@@ -68,13 +70,19 @@ public sealed class IvfIndex
         Span<short> qq = stackalloc short[16]; // 16 p/ SIMD; lanes 14,15 = 0
         Quantizer.QuantizeI16(q, qq.Slice(0, D));
 
+        // Consulta float copiada para 16 lanes (14,15 = 0) p/ a distância de centroide SIMD.
+        Span<float> qf = stackalloc float[16];
+        q.CopyTo(qf);
+        qf[14] = 0f; qf[15] = 0f;
+        ref float qfRef = ref MemoryMarshal.GetReference(qf);
+
         // --- etapa 1: nprobe centroides mais próximos (float), ascendentes ---
         Span<int> probe = stackalloc int[nprobe];
         Span<float> probeD = stackalloc float[nprobe];
         int filled = 0;
         for (int c = 0; c < K; c++)
         {
-            float dc = CentroidDist(q, c);
+            float dc = CentroidDist(ref qfRef, c);
             if (filled < nprobe)
             {
                 int i = filled++;
@@ -114,15 +122,28 @@ public sealed class IvfIndex
         return new SearchResult(score, score < 0.6f);
     }
 
+    // Máscara float: lanes 0..5 = 1 (dims 8..13), lanes 6,7 = 0 (dims 14,15 inexistentes).
+    static readonly Vector256<float> FMask =
+        Vector256.Create(1f, 1f, 1f, 1f, 1f, 1f, 0f, 0f);
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    float CentroidDist(ReadOnlySpan<float> q, int c)
+    float CentroidDist(ref float qf, int c)
     {
-        int cb = c * D;
         var cent = _centroids;
+        int cb = c * D;
+        if (Avx2.IsSupported)
+        {
+            ref float cb0 = ref cent[cb];
+            Vector256<float> d0 = Vector256.LoadUnsafe(ref qf) - Vector256.LoadUnsafe(ref cb0);
+            Vector256<float> d1 = (Vector256.LoadUnsafe(ref Unsafe.Add(ref qf, 8))
+                                 - Vector256.LoadUnsafe(ref Unsafe.Add(ref cb0, 8))) * FMask;
+            return Vector256.Sum(d0 * d0 + d1 * d1);
+        }
+
         float s = 0f;
         for (int d = 0; d < D; d++)
         {
-            float diff = q[d] - cent[cb + d];
+            float diff = Unsafe.Add(ref qf, d) - cent[cb + d];
             s += diff * diff;
         }
         return s;
