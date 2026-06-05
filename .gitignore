@@ -483,3 +483,6 @@ $RECYCLE.BIN/
 
 # lock transitório do scheduler (não versionar)
 .claude/scheduled_tasks.lock
+
+# Rust build output
+api-rs/target/
