@@ -32,7 +32,6 @@ services:
       MIN_THREADS: "8"
       DOTNET_gcConcurrent: "0"
       DOTNET_PROCESSOR_COUNT: "1"
-      DOTNET_GCgen0size: "0x1000000"
     networks:
       - app
     deploy:
@@ -51,7 +50,6 @@ services:
       MIN_THREADS: "8"
       DOTNET_gcConcurrent: "0"
       DOTNET_PROCESSOR_COUNT: "1"
-      DOTNET_GCgen0size: "0x1000000"
     networks:
       - app
     deploy:
