@@ -15,7 +15,7 @@ namespace Rinha.Api;
 /// </summary>
 static class RawServer
 {
-    public static async Task RunAsync(int port, IvfIndex index, int nprobe)
+    public static async Task RunAsync(int port, IvfIndex index, int nLow, int nHigh)
     {
         var listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         listener.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
@@ -27,11 +27,11 @@ static class RawServer
             Socket conn;
             try { conn = await listener.AcceptAsync(); }
             catch { continue; }
-            _ = HandleConnection(conn, index, nprobe); // fire-and-forget; multiplexa via async I/O
+            _ = HandleConnection(conn, index, nLow, nHigh); // fire-and-forget; multiplexa via async I/O
         }
     }
 
-    static async Task HandleConnection(Socket sock, IvfIndex index, int nprobe)
+    static async Task HandleConnection(Socket sock, IvfIndex index, int nLow, int nHigh)
     {
         sock.NoDelay = true;
         byte[] buf = ArrayPool<byte>.Shared.Rent(8192);
@@ -68,7 +68,7 @@ static class RawServer
 
                 // 4. processa e responde
                 byte[] resp = isPost
-                    ? ProcessHttp(buf.AsSpan(bodyStart, contentLength), index, nprobe)
+                    ? ProcessHttp(buf.AsSpan(bodyStart, contentLength), index, nLow, nHigh)
                     : Responses.HttpReady;
                 await SendAll(sock, resp);
 
@@ -87,14 +87,14 @@ static class RawServer
     }
 
     // Vetoriza + busca; retorna a resposta HTTP completa. Erro ⇒ fallback 200 (nunca 500).
-    static byte[] ProcessHttp(ReadOnlySpan<byte> body, IvfIndex index, int nprobe)
+    static byte[] ProcessHttp(ReadOnlySpan<byte> body, IvfIndex index, int nLow, int nHigh)
     {
         try
         {
             var fr = PayloadParser.Parse(body);
             Span<float> v = stackalloc float[Vectorizer.Dims];
             Vectorizer.Vectorize(fr, v);
-            var res = index.Search(v, nprobe);
+            var res = index.SearchAdaptive(v, nLow, nHigh, out _);
             int fc = (int)MathF.Round(res.Score * 5f);
             return Responses.HttpByFraudCount[fc];
         }

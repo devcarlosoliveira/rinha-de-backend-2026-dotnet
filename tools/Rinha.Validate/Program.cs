@@ -80,6 +80,40 @@ foreach (int nprobe in nprobes)
     Console.WriteLine($"{nprobe,6} | {fp,5} {fn,5} | {failRate * 100,7:F2}% {acerto,7:F2}% | {detScore,9:F1} | {p50,7:F1} {p99,7:F1}");
 }
 
+// modo adaptativo: --adaptive nLow,nHigh[,nLow2,nHigh2,...] (pares)
+int[] adaptive = ParseList(args, "--adaptive", []);
+if (adaptive.Length >= 2)
+{
+    Console.WriteLine($"\n{"nLow",5} {"nHigh",6} | {"FP",5} {"FN",5} | {"detScore",9} | {"avgBkt",7} {"p50us",7} {"p99us",7}");
+    Console.WriteLine(new string('-', 70));
+    for (int k = 0; k + 1 < adaptive.Length; k += 2)
+    {
+        int nLow = adaptive[k], nHigh = adaptive[k + 1];
+        int tp = 0, tn = 0, fp = 0, fn = 0;
+        long sumScanned = 0;
+        var times = new double[total];
+        double tsToUs = 1e6 / Stopwatch.Frequency;
+        for (int i = 0; i < total; i++)
+        {
+            long t0 = Stopwatch.GetTimestamp();
+            var res = index.SearchAdaptive(qvecs.AsSpan(i * Vectorizer.Dims, Vectorizer.Dims), nLow, nHigh, out int sc);
+            times[i] = (Stopwatch.GetTimestamp() - t0) * tsToUs;
+            sumScanned += sc;
+            bool exp = expected[i];
+            if (res.Approved == exp) { if (exp) tn++; else tp++; }
+            else { if (res.Approved) fn++; else fp++; }
+        }
+        Array.Sort(times);
+        int n = tp + tn + fp + fn;
+        int e = fp + 3 * fn;
+        double eps = (double)e / n;
+        double failRate = (double)(fp + fn) / n;
+        double detScore = failRate > 0.15 ? -3000 : 1000 * Math.Log10(1 / Math.Max(eps, 0.001)) - 300 * Math.Log10(1 + e);
+        double avgBkt = (double)sumScanned / total;
+        Console.WriteLine($"{nLow,5} {nHigh,6} | {fp,5} {fn,5} | {detScore,9:F1} | {avgBkt,7:F2} {times[total / 2],7:F1} {times[Math.Min(total - 1, (int)(total * 0.99))],7:F1}");
+    }
+}
+
 return 0;
 
 static int IntArg(string[] args, string name, int def)

@@ -2,8 +2,12 @@ using Rinha.Api;
 using Rinha.Core;
 
 string indexPath = Environment.GetEnvironmentVariable("INDEX_PATH") ?? "artifacts/index.bin";
-int nprobe = int.TryParse(Environment.GetEnvironmentVariable("NPROBE"), out int np) ? np : 16;
 int port = int.TryParse(Environment.GetEnvironmentVariable("PORT"), out int p) ? p : 9999;
+
+// Busca adaptativa: nLow buckets no passo barato; escala até nHigh nos casos ambíguos
+// (não-unânimes). Default 8/128 — atinge o piso de recall a ~12 buckets/req em média.
+int nLow = int.TryParse(Environment.GetEnvironmentVariable("NLOW"), out int nl) ? nl : 8;
+int nHigh = int.TryParse(Environment.GetEnvironmentVariable("NHIGH"), out int nh) ? nh : 128;
 
 // Em cgroup de 0.45 CPU o .NET enxerga 1 processador e o ThreadPool cresce só 1 thread/s —
 // durante o ramp 1→900 rps do k6 isso enfileira e infla o p99. Pré-aquece um piso modesto
@@ -15,9 +19,9 @@ int port = int.TryParse(Environment.GetEnvironmentVariable("PORT"), out int p) ?
 }
 
 // Carrega o índice ANTES de escutar — quando a porta responde, já está pronto.
-Console.WriteLine($"carregando {indexPath} (nprobe={nprobe})...");
+Console.WriteLine($"carregando {indexPath} (adaptativo nLow={nLow} nHigh={nHigh})...");
 var index = IvfIndex.Load(indexPath);
 Console.WriteLine($"índice pronto: N={index.N:N0} K={index.K} — escutando :{port}");
 
 // Servidor HTTP em socket cru (sem Kestrel/ASP.NET): bloqueia aqui para sempre.
-await RawServer.RunAsync(port, index, nprobe);
+await RawServer.RunAsync(port, index, nLow, nHigh);

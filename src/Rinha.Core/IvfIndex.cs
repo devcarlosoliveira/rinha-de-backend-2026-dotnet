@@ -122,6 +122,64 @@ public sealed class IvfIndex
         return new SearchResult(score, score < 0.6f);
     }
 
+    /// <summary>
+    /// Busca adaptativa: escaneia <paramref name="nLow"/> buckets e, se o resultado for
+    /// <b>ambíguo</b> (fraud_count 2 ou 3 — encosta na fronteira 0.6), escala até
+    /// <paramref name="nHigh"/> buckets. Casos confiantes (0,1,4,5) param cedo. Corta a CPU
+    /// média (a maioria para em nLow) e, ao mesmo tempo, recupera os erros de recall — que
+    /// são exatamente os casos near-boundary que escalam. <paramref name="scanned"/> devolve
+    /// quantos buckets foram varridos (proxy de custo).
+    /// </summary>
+    public SearchResult SearchAdaptive(ReadOnlySpan<float> q, int nLow, int nHigh, out int scanned)
+    {
+        if (nHigh < 1) nHigh = 1; else if (nHigh > K) nHigh = K;
+        if (nLow < 1) nLow = 1; else if (nLow > nHigh) nLow = nHigh;
+
+        Span<short> qq = stackalloc short[16];
+        Quantizer.QuantizeI16(q, qq.Slice(0, D));
+        Span<float> qf = stackalloc float[16];
+        q.CopyTo(qf); qf[14] = 0f; qf[15] = 0f;
+        ref float qfRef = ref MemoryMarshal.GetReference(qf);
+
+        // etapa 1: top nHigh centroides ascendentes (a varredura de K é fixa de qualquer jeito)
+        Span<int> probe = stackalloc int[nHigh];
+        Span<float> probeD = stackalloc float[nHigh];
+        int filled = 0;
+        for (int c = 0; c < K; c++)
+        {
+            float dc = CentroidDist(ref qfRef, c);
+            if (filled < nHigh) { int i = filled++; probeD[i] = dc; probe[i] = c; BubbleUp(probeD, probe, i); }
+            else if (dc < probeD[nHigh - 1]) { int i = nHigh - 1; probeD[i] = dc; probe[i] = c; BubbleUp(probeD, probe, i); }
+        }
+
+        // etapa 2: incremental com early-exit
+        Span<int> bestD = stackalloc int[5];
+        Span<byte> bestL = stackalloc byte[5];
+        bestD.Fill(int.MaxValue); bestL.Clear();
+        var vectors = _vectors;
+        int scannedBuckets = 0;
+        for (int pi = 0; pi < filled; pi++)
+        {
+            int b = probe[pi];
+            int start = _offsets[b], end = _offsets[b + 1];
+            for (int v = start; v < end; v++)
+            {
+                int dist = VecDist(qq, vectors, v * D);
+                if (dist < bestD[4]) InsertTop5(bestD, bestL, dist, Label(v));
+            }
+            scannedBuckets++;
+            if (scannedBuckets >= nLow)
+            {
+                int fc = bestL[0] + bestL[1] + bestL[2] + bestL[3] + bestL[4];
+                if (fc == 0 || fc == 5) break; // confiante só quando unânime (0 ou 5 fraudes)
+            }
+        }
+        scanned = scannedBuckets;
+        int fraud = bestL[0] + bestL[1] + bestL[2] + bestL[3] + bestL[4];
+        float score = fraud / 5f;
+        return new SearchResult(score, score < 0.6f);
+    }
+
     // Máscara float: lanes 0..5 = 1 (dims 8..13), lanes 6,7 = 0 (dims 14,15 inexistentes).
     static readonly Vector256<float> FMask =
         Vector256.Create(1f, 1f, 1f, 1f, 1f, 1f, 0f, 0f);
