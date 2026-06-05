@@ -15,12 +15,33 @@ namespace Rinha.Api;
 /// </summary>
 static class RawServer
 {
-    public static async Task RunAsync(int port, IvfIndex index, int nLow, int nHigh)
+    public static async Task RunAsync(int port, string? socketPath, IvfIndex index, int nLow, int nHigh)
     {
-        var listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        listener.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-        listener.Bind(new IPEndPoint(IPAddress.Any, port));
-        listener.Listen(512);
+        Socket listener;
+        if (!string.IsNullOrEmpty(socketPath))
+        {
+            // Unix domain socket (LB→API): sem pilha TCP de loopback ⇒ menos CPU/request e
+            // sem TIME_WAIT/exaustão de porta sob carga. O .sock vive num tmpfs partilhado.
+            try { File.Delete(socketPath); } catch { }
+            listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+            listener.Bind(new UnixDomainSocketEndPoint(socketPath));
+            listener.Listen(512);
+            try
+            {
+                File.SetUnixFileMode(socketPath,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite |
+                    UnixFileMode.GroupRead | UnixFileMode.GroupWrite |
+                    UnixFileMode.OtherRead | UnixFileMode.OtherWrite);
+            }
+            catch { }
+        }
+        else
+        {
+            listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            listener.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            listener.Bind(new IPEndPoint(IPAddress.Any, port));
+            listener.Listen(512);
+        }
 
         while (true)
         {
@@ -33,7 +54,7 @@ static class RawServer
 
     static async Task HandleConnection(Socket sock, IvfIndex index, int nLow, int nHigh)
     {
-        sock.NoDelay = true;
+        try { sock.NoDelay = true; } catch { } // TCP_NODELAY não se aplica a Unix sockets
         byte[] buf = ArrayPool<byte>.Shared.Rent(8192);
         int len = 0; // bytes válidos em buf[0..len)
         try

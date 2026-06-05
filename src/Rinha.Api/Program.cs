@@ -3,6 +3,7 @@ using Rinha.Core;
 
 string indexPath = Environment.GetEnvironmentVariable("INDEX_PATH") ?? "artifacts/index.bin";
 int port = int.TryParse(Environment.GetEnvironmentVariable("PORT"), out int p) ? p : 9999;
+string? socketPath = Environment.GetEnvironmentVariable("SOCKET_PATH");
 
 // Busca adaptativa: nLow buckets no passo barato; escala até nHigh nos casos ambíguos
 // (não-unânimes). Default 8/128 — atinge o piso de recall a ~12 buckets/req em média.
@@ -30,7 +31,7 @@ int nHigh = int.TryParse(Environment.GetEnvironmentVariable("NHIGH"), out int nh
 // Carrega o índice ANTES de escutar — quando a porta responde, já está pronto.
 Console.WriteLine($"carregando {indexPath} (adaptativo nLow={nLow} nHigh={nHigh})...");
 var index = IvfIndex.Load(indexPath);
-Console.WriteLine($"índice pronto: N={index.N:N0} K={index.K} — escutando :{port}");
+Console.WriteLine($"índice pronto: N={index.N:N0} K={index.K} — escutando {(string.IsNullOrEmpty(socketPath) ? $":{port}" : socketPath)}");
 
 // Servidor HTTP em socket cru (sem Kestrel/ASP.NET): bloqueia aqui para sempre.
-await RawServer.RunAsync(port, index, nLow, nHigh);
+await RawServer.RunAsync(port, socketPath, index, nLow, nHigh);

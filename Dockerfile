@@ -1,30 +1,30 @@
 # syntax=docker/dockerfile:1
 
-# ---------- index: constrói o index.bin com .NET (sem limites; não vai pra imagem final) ----------
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS index
+# ---------- build: publica o binário AOT e constrói o index.bin ----------
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends clang zlib1g-dev \
+ && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .
+
+# Binário nativo da API (Native AOT, linux-x64)
+RUN dotnet publish src/Rinha.Api -c Release -r linux-x64 -o /app
+
 # Índice IVF (int16, escala 10000, v5) a partir das referências.
-# Para acelerar builds, troque por: COPY artifacts/index.bin /index.bin
+# Para acelerar builds, troque por: COPY artifacts/index.bin /app/index.bin
 RUN dotnet run -c Release --project src/Rinha.IndexBuilder -- \
-        build resources/references.json.gz /index.bin --k 2048 --iters 12
+        build resources/references.json.gz /app/index.bin --k 2048 --iters 12
 
-# ---------- rust: compila o servidor (sem GC, event loop mono-thread) ----------
-FROM rust:1-bookworm AS rust
-WORKDIR /app
-COPY api-rs/Cargo.toml api-rs/Cargo.lock ./
-COPY api-rs/src ./src
-# Baseline x86-64-v2 (Haswell ok); AVX2 é detectado em runtime (is_x86_feature_detected).
-ENV RUSTFLAGS="-C target-cpu=x86-64-v2"
-RUN cargo build --release --locked
-
-# ---------- final: imagem mínima só com o binário + índice ----------
+# ---------- final: debian-slim (roda como root => cria o .sock no volume partilhado) ----------
 FROM debian:bookworm-slim AS final
-COPY --from=rust /app/target/release/rinha-api /rinha-api
-COPY --from=index /index.bin /index.bin
-ENV INDEX_PATH=/index.bin \
+WORKDIR /app
+COPY --from=build /app/Rinha.Api /app/Rinha.Api
+COPY --from=build /app/index.bin /app/index.bin
+ENV INDEX_PATH=/app/index.bin \
     NLOW=8 \
     NHIGH=128 \
-    PORT=9999
+    PORT=9999 \
+    DOTNET_gcServer=0
 EXPOSE 9999
-ENTRYPOINT ["/rinha-api"]
+ENTRYPOINT ["/app/Rinha.Api"]
