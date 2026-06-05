@@ -30,10 +30,11 @@ public static class Quantizer
     /// <summary>
     /// Escala do int16: <c>round(x * 8000)</c>, uniforme em todas as dims (o sentinela -1
     /// das dims 5,6 vira -8000). Sem pesos ⇒ a distância int16 é a euclidiana pura escalada,
-    /// igual ao ground truth. 8000 evita estouro de int32 na soma SIMD (máx ~20·8000² ≈
-    /// 1,3e9 &lt; 2,1e9).
+    /// igual ao ground truth. 10000 dá precisão suficiente p/ E=0 (reproduz o k-NN float
+    /// exato do avaliador) e ainda evita estouro de int32 na soma SIMD: pior caso
+    /// 20·10000² = 2,0e9 &lt; 2,147e9 (dims 5,6 sentinela dobram o diff ⇒ fator 20, não 14).
     /// </summary>
-    public const float Scale16 = 8000f;
+    public const float Scale16 = 10000f;
 
     public static short QuantizeI16(float x)
     {
