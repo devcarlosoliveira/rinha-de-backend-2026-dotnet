@@ -1,9 +1,11 @@
 using Rinha.Api;
+using Rinha.Api.Epoll;
 using Rinha.Core;
 
 string indexPath = Environment.GetEnvironmentVariable("INDEX_PATH") ?? "artifacts/index.bin";
 int port = int.TryParse(Environment.GetEnvironmentVariable("PORT"), out int p) ? p : 9999;
 string? socketPath = Environment.GetEnvironmentVariable("SOCKET_PATH");
+string runtime = Environment.GetEnvironmentVariable("RUNTIME") ?? "async"; // "epoll" | "async"
 
 // Busca adaptativa: nLow buckets no passo barato; escala até nHigh nos casos ambíguos
 // (não-unânimes). Default 8/128 — atinge o piso de recall a ~12 buckets/req em média.
@@ -31,7 +33,24 @@ int nHigh = int.TryParse(Environment.GetEnvironmentVariable("NHIGH"), out int nh
 // Carrega o índice ANTES de escutar — quando a porta responde, já está pronto.
 Console.WriteLine($"carregando {indexPath} (adaptativo nLow={nLow} nHigh={nHigh})...");
 var index = IvfIndex.Load(indexPath);
-Console.WriteLine($"índice pronto: N={index.N:N0} K={index.K} — escutando {(string.IsNullOrEmpty(socketPath) ? $":{port}" : socketPath)}");
+Console.WriteLine($"índice pronto: N={index.N:N0} K={index.K} runtime={runtime} — escutando {(string.IsNullOrEmpty(socketPath) ? $":{port}" : socketPath)}");
 
-// Servidor HTTP em socket cru (sem Kestrel/ASP.NET): bloqueia aqui para sempre.
+// Trava todas as páginas (índice incluso) na RAM ⇒ zero page-fault no serviço (precisa de
+// ulimit memlock). MCL_CURRENT também faz fault-in eager (pretouch). Tunável via env.
+if (Environment.GetEnvironmentVariable("MLOCK_INDEX") == "1")
+{
+    if (Native.mlockall(Native.MCL_CURRENT | Native.MCL_FUTURE) == 0)
+        Console.WriteLine("mlockall: índice travado na RAM");
+    else
+        Console.WriteLine("mlockall falhou (ulimit memlock?) — seguindo sem lock");
+}
+
+if (runtime == "epoll")
+{
+    // Event loop epoll mono-thread (pinado a um core via cpuset). Bloqueia para sempre.
+    new EpollServer(index, nLow, nHigh).Run(socketPath, port);
+    return;
+}
+
+// Servidor HTTP em socket cru assíncrono (Kestrel-free): bloqueia aqui para sempre.
 await RawServer.RunAsync(port, socketPath, index, nLow, nHigh);
