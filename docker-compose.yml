@@ -23,10 +23,11 @@ services:
           memory: "32MB"
 
   api1:
-    image: ${API_IMAGE:-devcarlosoliveira/rinha-2026-dotnet@sha256:e6a94383944bca9070c9fd59d28eb32a0a573efe6c133260ea7da57b6b579683}
+    image: ${API_IMAGE:-devcarlosoliveira/rinha-2026-dotnet@sha256:20627b0b4ead6afdbbc68242f7f3d8c18893e2b1bb82a4779595977a867e272e}
     environment:
       INDEX_PATH: /app/index.bin
-      NPROBE: "16"
+      NLOW: "8"
+      NHIGH: "128"
       PORT: "9999"
       MIN_THREADS: "8"
     networks:
@@ -38,10 +39,11 @@ services:
           memory: "159MB"
 
   api2:
-    image: ${API_IMAGE:-devcarlosoliveira/rinha-2026-dotnet@sha256:e6a94383944bca9070c9fd59d28eb32a0a573efe6c133260ea7da57b6b579683}
+    image: ${API_IMAGE:-devcarlosoliveira/rinha-2026-dotnet@sha256:20627b0b4ead6afdbbc68242f7f3d8c18893e2b1bb82a4779595977a867e272e}
     environment:
       INDEX_PATH: /app/index.bin
-      NPROBE: "16"
+      NLOW: "8"
+      NHIGH: "128"
       PORT: "9999"
       MIN_THREADS: "8"
     networks:
