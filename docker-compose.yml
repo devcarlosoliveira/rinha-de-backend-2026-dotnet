@@ -30,6 +30,8 @@ services:
       NHIGH: "128"
       PORT: "9999"
       MIN_THREADS: "8"
+      DOTNET_gcConcurrent: "0"
+      DOTNET_PROCESSOR_COUNT: "1"
     networks:
       - app
     deploy:
@@ -46,6 +48,8 @@ services:
       NHIGH: "128"
       PORT: "9999"
       MIN_THREADS: "8"
+      DOTNET_gcConcurrent: "0"
+      DOTNET_PROCESSOR_COUNT: "1"
     networks:
       - app
     deploy:
