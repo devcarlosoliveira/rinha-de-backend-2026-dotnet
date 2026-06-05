@@ -46,10 +46,8 @@ struct Conn {
 
 const LISTENER: Token = Token(0);
 
-pub fn run(port: u16, index: &IvfIndex, nlow: usize, nhigh: usize) -> std::io::Result<()> {
+pub fn run(mut listener: TcpListener, index: &IvfIndex, nlow: usize, nhigh: usize) -> std::io::Result<()> {
     let resp = Responses::new();
-    let addr = format!("0.0.0.0:{port}").parse().unwrap();
-    let mut listener = TcpListener::bind(addr)?;
     let mut poll = Poll::new()?;
     poll.registry().register(&mut listener, LISTENER, Interest::READABLE)?;
     let mut events = Events::with_capacity(1024);
