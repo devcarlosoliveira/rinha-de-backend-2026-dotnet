@@ -23,15 +23,16 @@ services:
           memory: "32MB"
 
   api1:
-    image: ${API_IMAGE:-devcarlosoliveira/rinha-2026-dotnet@sha256:ae2e4d1cbfe4e0d9d07818ef1d95a3dbdc36c1da7e9d8b81545d1f329e8781e1}
+    image: ${API_IMAGE:-devcarlosoliveira/rinha-2026-dotnet@sha256:3fb44e57f20d17f589f179f272aedb876103fae47daf3e437890317d9f7ade3d}
     environment:
       INDEX_PATH: /app/index.bin
       NLOW: "8"
       NHIGH: "128"
       PORT: "9999"
-      MIN_THREADS: "8"
+      MIN_THREADS: "2"
       DOTNET_gcConcurrent: "0"
       DOTNET_PROCESSOR_COUNT: "1"
+      MAX_THREADS: "2"
     networks:
       - app
     deploy:
@@ -41,15 +42,16 @@ services:
           memory: "159MB"
 
   api2:
-    image: ${API_IMAGE:-devcarlosoliveira/rinha-2026-dotnet@sha256:ae2e4d1cbfe4e0d9d07818ef1d95a3dbdc36c1da7e9d8b81545d1f329e8781e1}
+    image: ${API_IMAGE:-devcarlosoliveira/rinha-2026-dotnet@sha256:3fb44e57f20d17f589f179f272aedb876103fae47daf3e437890317d9f7ade3d}
     environment:
       INDEX_PATH: /app/index.bin
       NLOW: "8"
       NHIGH: "128"
       PORT: "9999"
-      MIN_THREADS: "8"
+      MIN_THREADS: "2"
       DOTNET_gcConcurrent: "0"
       DOTNET_PROCESSOR_COUNT: "1"
+      MAX_THREADS: "2"
     networks:
       - app
     deploy:
