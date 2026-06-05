@@ -16,6 +16,15 @@ int nHigh = int.TryParse(Environment.GetEnvironmentVariable("NHIGH"), out int nh
     int minTh = int.TryParse(Environment.GetEnvironmentVariable("MIN_THREADS"), out int mt) ? mt : 8;
     ThreadPool.GetMinThreads(out _, out int minIo);
     ThreadPool.SetMinThreads(minTh, Math.Max(minIo, minTh));
+
+    // Capa as worker threads: sob 0.45 CPU, um burst que processa N buscas em paralelo
+    // estoura a quota do CFS e congela o container ~55ms (a maior fonte do p99). Serializar
+    // o processamento mantém a CPU instantânea baixa ⇒ evita o throttle. 0/ausente = não mexe.
+    if (int.TryParse(Environment.GetEnvironmentVariable("MAX_THREADS"), out int maxTh) && maxTh > 0)
+    {
+        ThreadPool.GetMaxThreads(out _, out int maxIo);
+        ThreadPool.SetMaxThreads(Math.Max(maxTh, minTh), Math.Max(maxIo, maxTh));
+    }
 }
 
 // Carrega o índice ANTES de escutar — quando a porta responde, já está pronto.
