@@ -112,6 +112,47 @@ cpuset (cores dedicados) só aparece em ≥4 (Mac Mini). E o limite de 10 prévi
 uma aposta **bem-fundamentada** (mesma arquitetura do fksegundo, comprovada ~6000), com o **4449
 seguro** recuperável como rede.
 
+## Fase 4 — Pós-prazo: finalmente medindo (4 cores)
+
+O ambiente de dev ganhou **4 CPUs lógicas** (antes 2) — o que permitiu, pela primeira vez,
+subir a stack epoll+cpuset completa sob carga. Fora do prazo, então só como **aprendizado**.
+**Ressalva grande:** é WSL2 com 4 lógicas, **não o Mac Mini Haswell** (2 físicos / 4 com HT);
+números ruidosos, servem para comparar configs entre si, não para prever o score oficial.
+
+k6 oficial (ramp 1→900 rps/120 s), variando a posição do gerador de carga:
+
+| Config | k6 | p99 | erros | **final** |
+|---|---|---|---|---|
+| epoll + cpuset | pinado longe das APIs | 185 ms | 0 | 3734 |
+| epoll + cpuset | **sem pin** (como o engine roda) | 295 ms | **50** | 2142 |
+| async + mlock, threads sem cap | sem pin | — | **82 %** | −1491 (OOM) |
+| async sem mlock, pool fixo 8 | sem pin | 482 ms | **0** | 3317 |
+
+Dois achados que **confirmam** a jornada e um que a **contraria**:
+
+- ✅ **mlock + async = desastre, confirmado.** Sem cap de threads, o `MCL_FUTURE` trava toda
+  alocação, o RSS estoura os 159 MB e o container **morre por OOM** — mesmo veredito da Fase 3,
+  por outra via.
+- ✅ **async cabe e não erra** quando se remove o mlock e se fixa o pool (8 threads): RSS ~88 MB,
+  E=0, 0 erro — só p99 pior (throttle ~26 % do tempo).
+- ❌ **O cpuset, sob o gerador real, virou desvantagem.** Pinado mono-thread, quando o k6 cai no
+  mesmo core e o CFS congela o loop, ele **deixa de aceitar conexão → o nginx devolve 502**: 50
+  erros que derrubaram a detecção (3000→1611). A async, espalhada por todos os cores, nunca fica
+  sem um thread executável → **0 erro**. Resultado: **nestes testes, a async fiel (3317) superou
+  a epoll+cpuset submetida (2142)**.
+
+Isso **tensiona o aprendizado #3** ("cpuset é a alavanca"). Não o falsifica — o rival fksegundo
+provou ~6000 *com* cpuset, então a arquitetura funciona. Mas mostra que pinar a API a um **único
+core** a torna **frágil** justamente quando o gerador de carga divide esse core (o caso real).
+O que faltava na aposta provavelmente não era o cpuset isolado, e sim as peças que o tornam
+seguro (mimalloc, `network_mode: none`, FD-passing) — e talvez pinar a **2 cores físicos** em vez
+de a uma thread de Hyper-Threading.
+
+**Aprendizado:** "não validável localmente" era, na real, "não validei porque não tinha o
+hardware". Quando finalmente rodei **um** benchmark realista (k6 sem pin), o resultado foi o
+oposto do que a intuição vendia — e teria custado um run barato descobrir isso *antes* de apostar
+tudo no cpuset.
+
 ## Aprendizados destilados
 
 1. **Meça antes de concluir.** "Teto do modelo" (1370) era o teto do int8. "Piso da linguagem"
@@ -124,9 +165,17 @@ seguro** recuperável como rede.
 6. **Estude os rivais.** A peça que faltava estava num `docker-compose.yml` público.
 7. **Otimização tem um teto físico.** O score satura em 6000; sub-ms é um ótimo convergente
    (epoll+pin+mlock+UDS), não há "transporte mágico" — io_uring, o único passo além, é proibido.
+8. **Rode o benchmark realista antes de apostar.** Medi tudo *menos* o cenário em que o gerador
+   de carga divide os cores das APIs — exatamente como a máquina oficial roda. Quando enfim medi
+   (Fase 4), o cpuset que eu elegi como alavanca virou o ponto frágil (502 sob contenção). Um run
+   barato no setup certo vale mais que sete otimizações no setup errado.
 
 ## O que ficou em aberto
 
-- A magnitude do p99 da config epoll+cpuset no Mac Mini (não validável pré-prazo).
-- Se uma vaga de prévia abrir antes do prazo, **um run** converteria a aposta em certeza
-  (ou mandaria reverter pro 4449 a tempo).
+- A magnitude do p99 no **Mac Mini real** continua em aberto — a Fase 4 mediu em WSL2 (4 lógicas),
+  que não reproduz o Haswell 2-físicos/4-HT. Local, sob k6 sem pin, a epoll+cpuset perdeu pra
+  async fiel; no hardware oficial pode ser diferente (HT, scheduler, mimalloc, `network_mode`).
+- O resultado oficial (semana de 8/jun) é o juiz final: dirá se a aposta do cpuset valeu ou se o
+  **4449** da config async teria sido a escolha segura.
+- **Não dá mais pra agir** — o prazo (05/jun) fechou. Fica como aprendizado para a próxima edição:
+  validar o cenário realista de carga **antes** do último dia.
