@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1
+# Build rápido para teste LOCAL: publica só o binário AOT. O index.bin NÃO é embutido —
+# é montado por volume no docker-compose.local.yml (artifacts/index.bin), evitando
+# reconstruí-lo e sem precisar de exceção no .dockerignore. NÃO é a imagem de submissão.
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends clang zlib1g-dev \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY . .
+RUN dotnet publish src/Rinha.Api -c Release -r linux-x64 -o /app
+
+FROM debian:bookworm-slim AS final
+WORKDIR /app
+COPY --from=build /app/Rinha.Api /app/Rinha.Api
+ENV INDEX_PATH=/app/index.bin \
+    NLOW=8 \
+    NHIGH=128 \
+    PORT=9999 \
+    DOTNET_gcServer=0
+EXPOSE 9999
+ENTRYPOINT ["/app/Rinha.Api"]

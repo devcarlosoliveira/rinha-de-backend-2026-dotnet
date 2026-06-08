@@ -1,0 +1,86 @@
+# Compose de TESTE LOCAL — arquitetura final (epoll + UDS tmpfs + cpuset + mlock).
+# Difere do docker-compose.yml de submissão: aqui pinamos cores (precisa de >=4 cores) e
+# usamos Unix domain sockets num tmpfs partilhado, como descrito no README/nginx.conf.
+#
+#   api1  -> core 0, 0.45 CPU, UDS /sockets/api1.sock
+#   api2  -> core 1, 0.45 CPU, UDS /sockets/api2.sock
+#   nginx -> cores 2,3, 0.10 CPU, escuta :9999 e faz round-robin nos UDS
+#
+# Subir:  docker compose -f docker-compose.local.yml up -d --build
+# O k6 (teste/) deve ser pinado em 2,3 para não roubar ciclo dos cores 0/1 das APIs.
+
+x-api: &api
+  build:
+    context: .
+    dockerfile: Dockerfile.local
+  image: rinha-2026-dotnet:local
+  environment:
+    INDEX_PATH: /app/index.bin
+    RUNTIME: epoll
+    NLOW: "8"
+    NHIGH: "128"
+    MLOCK_INDEX: "1"
+    MIN_THREADS: "8"
+  volumes:
+    - sockets:/sockets
+    - ./artifacts/index.bin:/app/index.bin:ro
+  ulimits:
+    memlock: -1
+  networks:
+    - app
+
+services:
+  api1:
+    <<: *api
+    environment:
+      INDEX_PATH: /app/index.bin
+      RUNTIME: epoll
+      NLOW: "8"
+      NHIGH: "128"
+      MLOCK_INDEX: "1"
+      MIN_THREADS: "8"
+      SOCKET_PATH: /sockets/api1.sock
+    cpuset: "0"
+    cpus: 0.45
+    mem_limit: 159m
+
+  api2:
+    <<: *api
+    environment:
+      INDEX_PATH: /app/index.bin
+      RUNTIME: epoll
+      NLOW: "8"
+      NHIGH: "128"
+      MLOCK_INDEX: "1"
+      MIN_THREADS: "8"
+      SOCKET_PATH: /sockets/api2.sock
+    cpuset: "1"
+    cpus: 0.45
+    mem_limit: 159m
+
+  nginx:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - sockets:/sockets
+    ports:
+      - "9999:9999"
+    depends_on:
+      - api1
+      - api2
+    cpuset: "2,3"
+    cpus: 0.10
+    mem_limit: 32m
+    networks:
+      - app
+
+networks:
+  app:
+    driver: bridge
+
+volumes:
+  sockets:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=16m"
