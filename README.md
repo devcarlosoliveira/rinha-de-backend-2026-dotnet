@@ -30,7 +30,7 @@ cliente :9999 → nginx (L4 stream) ──unix:/sockets/api1.sock──→ api1 
 | Técnica | Motivo |
 |---|---|
 | **epoll mono-thread** (não Kestrel/async) | um burst paralelo estoura a quota de 0.45 CPU e o CFS congela o container ~55 ms. Serializar numa thread mantém a CPU instantânea baixa. |
-| **cpuset (core dedicado)** | elimina contenção/migração de scheduler — a peça decisiva para o p99 sub-ms. |
+| **cpuset (core dedicado)** | elimina contenção/migração de scheduler — ajuda o p99 *quando o gerador de carga está noutros cores*. Sob o k6 na mesma máquina pode virar desvantagem (ver **Benchmark local**). |
 | **mlock do índice** | zero page-fault no caminho quente (precisa de `ulimit memlock=-1`). |
 | **Unix domain socket (tmpfs)** | sem pilha TCP de loopback (handshake/checksum/TIME_WAIT) ⇒ menos CPU dos dois lados. |
 | **int16 escala 10000 + busca adaptativa** | E=0 (detecção perfeita) varrendo ~12 buckets/req em média. |
@@ -46,7 +46,33 @@ cliente :9999 → nginx (L4 stream) ──unix:/sockets/api1.sock──→ api1 
 | Busca adaptativa | ~12,5 buckets/req em média |
 | RSS por instância (índice + mlock) | ~99 MB / 159 MB |
 | Score em prévia oficial (config async anterior) | final **4449** (det 3000 + p99 ~38 ms) |
-| p99 da config epoll+cpuset | a aposta — ver [JORNADA.md](./JORNADA.md) |
+| p99 da config epoll+cpuset | comparação de configs — ver **Benchmark local** abaixo |
+
+### Benchmark local (k6, ramp 1→900 rps em 120 s)
+
+> ⚠️ Medido em **WSL2, 4 CPUs lógicas — não é o Mac Mini Haswell oficial** (2 núcleos
+> físicos / 4 com HT, onde o `cpuset 0..3` é válido e roda). Números **ruidosos**, com
+> variância alta entre runs: servem para *comparar configs entre si*, não para prever o
+> score oficial.
+
+A detecção fica **E=0 (detScore 3000)** em toda config que não cai; o que muda é o p99 e a
+robustez sob o gerador de carga. Como o engine da Rinha roda o k6 **na mesma máquina, sem
+isolá-lo dos cores das APIs**, a linha representativa é a do k6 **sem pin**:
+
+| Config | k6 | p99 | erros | final |
+|---|---|---|---|---|
+| epoll + cpuset | pinado longe das APIs | 185 ms | 0 | 3734 |
+| **epoll + cpuset** | **sem pin (realista)** | 295 ms | 50 | **2142** |
+| async + mlock, threads sem cap | sem pin | — | 82 % | −1491 (OOM) |
+| **async sem mlock, pool fixo 8** | **sem pin (realista)** | 482 ms | 0 | **3317** |
+
+**Aprendizado:** o `cpuset` protege o p99 quando o k6 está longe dos cores das APIs, mas
+**vira desvantagem quando o gerador divide os mesmos cores** (o caso real). O event loop
+mono-thread pinado, ao ser congelado pelo CFS, deixa de aceitar conexões → o nginx devolve
+**502**. Já uma async **sem mlock** com **pool fixo de threads** cabe nos 159 MB (o mlock
+com `MCL_FUTURE` inflava o RSS e causava **OOM**) e, espalhada por todos os cores, não erra
+— só fica mais lenta. Nestes testes locais ela pontuou **mais** que a config submetida.
+Mecanismo completo em [JORNADA.md](./JORNADA.md).
 
 ## Estrutura
 
