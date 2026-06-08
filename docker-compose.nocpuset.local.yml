@@ -1,0 +1,81 @@
+# TESTE LOCAL (não-submissão) — variante ASYNC SEM cpuset, para comparar contra a
+# arquitetura epoll+cpuset. Mantém tudo igual à stack local (UDS tmpfs, mlock, limites
+# cgroup 0.45/0.45/0.10, índice montado por volume) e muda só duas coisas:
+#   - RUNTIME=async (ThreadPool livre p/ migrar entre cores) em vez de epoll mono-thread
+#   - SEM cpuset (nenhuma API/nginx pinada a core) => o scheduler distribui livremente
+#
+# Subir:  docker compose -f docker-compose.nocpuset.local.yml up -d --build
+# (usa a imagem rinha-2026-dotnet:local já buildada pelo docker-compose.local.yml)
+
+x-api: &api
+  build:
+    context: .
+    dockerfile: Dockerfile.local
+  image: rinha-2026-dotnet:local
+  environment:
+    INDEX_PATH: /app/index.bin
+    RUNTIME: async
+    NLOW: "8"
+    NHIGH: "128"
+    MLOCK_INDEX: "1"
+    MIN_THREADS: "8"
+  volumes:
+    - sockets:/sockets
+    - ./artifacts/index.bin:/app/index.bin:ro
+  ulimits:
+    memlock: -1
+  networks:
+    - app
+
+services:
+  api1:
+    <<: *api
+    environment:
+      INDEX_PATH: /app/index.bin
+      RUNTIME: async
+      NLOW: "8"
+      NHIGH: "128"
+      MLOCK_INDEX: "1"
+      MIN_THREADS: "8"
+      SOCKET_PATH: /sockets/api1.sock
+    cpus: 0.45
+    mem_limit: 159m
+
+  api2:
+    <<: *api
+    environment:
+      INDEX_PATH: /app/index.bin
+      RUNTIME: async
+      NLOW: "8"
+      NHIGH: "128"
+      MLOCK_INDEX: "1"
+      MIN_THREADS: "8"
+      SOCKET_PATH: /sockets/api2.sock
+    cpus: 0.45
+    mem_limit: 159m
+
+  nginx:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - sockets:/sockets
+    ports:
+      - "9999:9999"
+    depends_on:
+      - api1
+      - api2
+    cpus: 0.10
+    mem_limit: 32m
+    networks:
+      - app
+
+networks:
+  app:
+    driver: bridge
+
+volumes:
+  sockets:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=16m"
