@@ -1,19 +1,15 @@
-# Submissão da Rinha de Backend 2026.
-# A imagem da API precisa estar publicamente acessível (linux/amd64).
-# Defina API_IMAGE com a sua imagem pública, ex.:
-#   export API_IMAGE=seu-usuario/rinha-2026-dotnet:latest
-#
-# 2 instâncias: o índice int16 são ~85 MB residentes (3M×14×2), replicados por instância,
-# então a MEMÓRIA (não a CPU) limita o nº de instâncias. 3× não cabe com folga em 350 MB.
-# Soma dos limites: 0.10 + 2×0.45 = 1.0 CPU | 32 + 2×159 = 350 MB.
+# Submissão da Rinha de Backend 2026 — servidor epoll mono-thread + core dedicado.
+# Cada API: event loop epoll pinado a um core exclusivo (cpuset) ⇒ zero contenção/throttle;
+# índice travado na RAM (mlock); LB→API por Unix domain socket em tmpfs (sem TCP loopback).
+# Limites: 0.10 + 2×0.45 = 1.0 CPU | 32 + 2×159 = 350 MB.
 
 x-api: &api
-  image: ${API_IMAGE:-devcarlosoliveira/rinha-2026-dotnet:latest}
-  environment:
-    INDEX_PATH: /app/index.bin
-    NPROBE: "16"
-    PORT: "9999"
-    MIN_THREADS: "8"
+  image: ${API_IMAGE:-devcarlosoliveira/rinha-2026-dotnet@sha256:42854f2e79137ffeeb0d628c98b9e7e40ad99fcd21c52b6aed2814da1db3037e}
+  volumes:
+    - sockets:/sockets
+  ulimits:
+    memlock: -1
+    nofile: 65535
   networks:
     - app
   deploy:
@@ -27,8 +23,10 @@ services:
     image: nginx:1.27-alpine
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - sockets:/sockets
     ports:
       - "9999:9999"
+    cpuset: "2,3"
     depends_on:
       - api1
       - api2
@@ -42,9 +40,31 @@ services:
 
   api1:
     <<: *api
+    cpuset: "0"
+    environment:
+      INDEX_PATH: /app/index.bin
+      RUNTIME: epoll
+      MLOCK_INDEX: "1"
+      NLOW: "8"
+      NHIGH: "128"
+      SOCKET_PATH: /sockets/api1.sock
   api2:
     <<: *api
+    cpuset: "1"
+    environment:
+      INDEX_PATH: /app/index.bin
+      RUNTIME: epoll
+      MLOCK_INDEX: "1"
+      NLOW: "8"
+      NHIGH: "128"
+      SOCKET_PATH: /sockets/api2.sock
 
 networks:
   app:
     driver: bridge
+
+volumes:
+  sockets:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
